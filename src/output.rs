@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{ColorType, ImageEncoder};
 
+use crate::exif::{inject_exif, ObservationalMetadata};
 use crate::types::ProcessedImage;
 
 /// Encode an RGB/RGBA buffer to a baseline JPEG byte stream (4:2:0 chroma
@@ -65,6 +66,24 @@ pub fn encode_jpeg(
         libjpeg_turbo_rs::Subsampling::S420,
     )
     .map_err(|e| anyhow::anyhow!("JPEG encoding failed: {e}"))
+}
+
+/// Encode an RGB/RGBA buffer to a baseline JPEG byte stream (4:2:0 chroma
+/// subsampling) with an EXIF block, in memory.
+///
+/// The EXIF block is injected as an APP1 segment right behind the SOI marker,
+/// so the encoded image data is left exactly as [`encode_jpeg`] produced it.
+pub fn encode_jpeg_with_exif(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    channels: usize,
+    quality: u8,
+    metadata: &ObservationalMetadata,
+) -> Result<Vec<u8>> {
+    let jpeg = encode_jpeg(data, width, height, channels, quality)?;
+    let payload = metadata.exif_payload()?;
+    inject_exif(&jpeg, &payload)
 }
 
 /// Output file format, chosen from the output path's extension.
@@ -171,6 +190,36 @@ pub fn encode_png(
 
 pub fn save_image(image: &ProcessedImage, path: &Path, quality: u8) -> Result<()> {
     save_image_with(image, path, quality, PngCompression::default())
+}
+
+/// Save a `ProcessedImage` as a JPEG with an EXIF block built from `metadata`.
+///
+/// PNG output ignores the metadata: EXIF in a PNG lives in an `eXIf` chunk,
+/// which is a different thing with different readers.
+pub fn save_image_with_exif(
+    image: &ProcessedImage,
+    path: &Path,
+    quality: u8,
+    metadata: &ObservationalMetadata,
+) -> Result<()> {
+    match OutputFormat::from_path(path)? {
+        OutputFormat::Png => save_image_with(image, path, quality, PngCompression::default()),
+        OutputFormat::Jpeg => {
+            let jpeg_data = encode_jpeg_with_exif(
+                &image.data,
+                image.width,
+                image.height,
+                image.channels as usize,
+                quality,
+                metadata,
+            )?;
+
+            let file = File::create(path).context("Failed to create output file")?;
+            let mut writer = BufWriter::new(file);
+            writer.write_all(&jpeg_data).context("Failed to write JPEG data")?;
+            Ok(())
+        }
+    }
 }
 
 /// [`save_image`] with an explicit PNG compression level (ignored for JPEG).

@@ -59,6 +59,9 @@ base64 = "0.23"
 rayon = "1.10"
 nalgebra = "0.35"
 tracing = "0.1"
+# EXIF writer for the optional `--exif` mode: builds the TIFF/Exif block that
+# gets injected into the JPEG as an APP1 segment.
+little_exif = "0.6"
 clap = { version = "4.6", features = ["derive"], optional = true }
 clap_complete = { version = "4.6", optional = true }
 indicatif = { version = "0.18", optional = true }

@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use astroimage::{
-    annotate_image, encode_jpeg, encode_png, AnnotationConfig, ImageAnalyzer, ImageConverter,
-    OutputFormat, PngCompression, ProcessedImage, ThreadPool,
+    annotate_image, encode_jpeg, encode_jpeg_with_exif, encode_png, AnnotationConfig, ImageAnalyzer,
+    ImageConverter, ObservationalMetadata, OutputFormat, PngCompression, ProcessedImage, ThreadPool,
 };
 use clap::{Args, ValueEnum};
 
@@ -109,6 +109,12 @@ pub struct ConvertArgs {
     /// Errors only: no progress bar, no summary
     #[arg(long, conflicts_with = "verbose")]
     quiet: bool,
+
+    /// Write the header's observational keywords into the JPEG's EXIF block
+    /// (exposure, ISO, focal length, instrument, coordinates, …). PNG output
+    /// ignores it.
+    #[arg(long)]
+    exif: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -378,6 +384,15 @@ fn convert_one(job: &Job, args: &ConvertArgs, pool: &Arc<ThreadPool>) -> Result<
     let (meta, pixels) = ImageConverter::read_raw(&job.input)?;
     let read = t.elapsed();
 
+    // The EXIF block is built from the header alone, so the pixels are read
+    // exactly once. PNG output has no place for it.
+    let metadata = if args.exif && job.format == OutputFormat::Jpeg {
+        let header = ImageConverter::read_header(&job.input)?;
+        Some(ObservationalMetadata::from_header(&header))
+    } else {
+        None
+    };
+
     let analysis = if args.annotate {
         let t = Instant::now();
         let result = ImageAnalyzer::new()
@@ -412,7 +427,7 @@ fn convert_one(job: &Job, args: &ConvertArgs, pool: &Arc<ThreadPool>) -> Result<
     let process = t.elapsed();
 
     let t = Instant::now();
-    let bytes = encode(&image, job.format, args)?;
+    let bytes = encode(&image, job.format, args, metadata.as_ref())?;
     let encode = t.elapsed();
 
     let t = Instant::now();
@@ -436,10 +451,25 @@ fn convert_one(job: &Job, args: &ConvertArgs, pool: &Arc<ThreadPool>) -> Result<
     }))
 }
 
-fn encode(image: &ProcessedImage, format: OutputFormat, args: &ConvertArgs) -> Result<Vec<u8>> {
+fn encode(
+    image: &ProcessedImage,
+    format: OutputFormat,
+    args: &ConvertArgs,
+    metadata: Option<&ObservationalMetadata>,
+) -> Result<Vec<u8>> {
     let channels = image.channels as usize;
     match format {
-        OutputFormat::Jpeg => encode_jpeg(&image.data, image.width, image.height, channels, args.quality),
+        OutputFormat::Jpeg => match metadata {
+            Some(metadata) => encode_jpeg_with_exif(
+                &image.data,
+                image.width,
+                image.height,
+                channels,
+                args.quality,
+                metadata,
+            ),
+            None => encode_jpeg(&image.data, image.width, image.height, channels, args.quality),
+        },
         OutputFormat::Png => {
             encode_png(&image.data, image.width, image.height, channels, args.png_compression.into())
         }

@@ -105,12 +105,30 @@ leaves no truncated images behind.
 | `--measure-cap <N>` | 2000 | Max stars PSF-fitted for annotation (0 = all) |
 | `-v, --verbose` | off | Per-file details and timings on stderr (`--log` is an alias) |
 | `--quiet` | off | Errors only |
+| `--exif` | off | Write the header's observational keywords into the JPEG's EXIF block |
 
 Batch throughput: 9 real 26 MP frames on 4 cores take 0.9 s in one call,
 versus 2.5 s for a shell loop over single-file calls.
 
 `convert` is the default command; `rustafits convert …` spells it out (for an
 input file literally named `info`, `analyze` or `completions`).
+
+### EXIF: `rustafits … --exif`
+
+Writes the file's own header into the JPEG's EXIF block — the date and time,
+the exposure time, the ISO, the f-number and the focal length, the sensor
+temperature, the camera and the telescope, the filter, the target, the
+observer, and the coordinates as GPS:
+
+```bash
+$ rustafits m31.fits m31.jpg --exif
+$ exiftool m31.jpg | head -20
+```
+
+The header is read separately, so the pixels are read exactly once, and the
+block is injected as an APP1 segment: the encoded image data is byte-identical
+to a conversion without `--exif`. Off by default, so the output of a plain
+conversion does not change.
 
 ### Headers: `rustafits info`
 
@@ -198,6 +216,34 @@ let image: ProcessedImage = ImageConverter::new()
 // image.height   - pixel height
 // image.channels - 3 (RGB) or 4 (RGBA)
 // image.is_color - true if debayered/RGB, false if mono (gray replicated to RGB)
+```
+
+### EXIF in the JPEG output
+
+The header can be written into the JPEG's EXIF block. The metadata is passed to
+the encoder separately, so `ProcessedImage` keeps its shape:
+
+```rust
+use astroimage::{ImageConverter, ObservationalMetadata};
+
+let header = ImageConverter::read_header("input.fits")?;
+let metadata = ObservationalMetadata::from_header(&header);
+
+// Process and save in one go:
+ImageConverter::new()
+    .with_quality(90)
+    .convert_with_exif("input.fits", "output.jpg")?;
+
+// Or encode in memory:
+let image = ImageConverter::new().process("input.fits")?;
+let jpeg = astroimage::encode_jpeg_with_exif(
+    &image.data,
+    image.width,
+    image.height,
+    image.channels as usize,
+    90,
+    &metadata,
+)?;
 ```
 
 ### Full-resolution debayer (VNG)

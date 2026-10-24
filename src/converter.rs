@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 
+use crate::exif::ObservationalMetadata;
 use crate::formats;
 use crate::output::{self, PngCompression};
 use crate::pipeline;
@@ -154,6 +155,17 @@ impl ImageConverter {
             .context("Image save failed")
     }
 
+    /// [`save_processed`](Self::save_processed) with an EXIF block.
+    pub fn save_processed_with_exif<P: AsRef<Path>>(
+        image: &ProcessedImage,
+        output_path: P,
+        quality: u8,
+        metadata: &ObservationalMetadata,
+    ) -> Result<()> {
+        output::save_image_with_exif(image, output_path.as_ref(), quality, metadata)
+            .context("Image save failed")
+    }
+
     /// Process a FITS/XISF image and save the result as JPEG or PNG.
     pub fn convert<P: AsRef<Path>, Q: AsRef<Path>>(
         &self,
@@ -165,6 +177,27 @@ impl ImageConverter {
         let image = self.process(&input_path)?;
 
         output::save_image_with(&image, output_path.as_ref(), self.quality, self.png_compression)
+            .context("Image save failed")?;
+
+        Ok(())
+    }
+
+    /// Process a FITS/XISF image and save it as a JPEG whose EXIF block is
+    /// built from the file's own header.
+    ///
+    /// The header is read separately from the pixels — it is a few kilobytes —
+    /// so the pixel pipeline stays untouched. PNG output ignores the metadata.
+    pub fn convert_with_exif<P: AsRef<Path>, Q: AsRef<Path>>(
+        &self,
+        input_path: P,
+        output_path: Q,
+    ) -> Result<()> {
+        output::OutputFormat::from_path(output_path.as_ref())?;
+        let header = ImageConverter::read_header(&input_path)?;
+        let metadata = ObservationalMetadata::from_header(&header);
+        let image = self.process(&input_path)?;
+
+        output::save_image_with_exif(&image, output_path.as_ref(), self.quality, &metadata)
             .context("Image save failed")?;
 
         Ok(())

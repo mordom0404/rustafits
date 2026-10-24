@@ -354,3 +354,61 @@ fn convert_subcommand_and_completions() {
         assert!(script.contains("rustafits") && script.contains("analyze") && script.contains("png-compression"), "{shell}");
     }
 }
+
+/// The `--exif` flag writes the header's observational keywords into the
+/// JPEG's EXIF block. Without it the file stays exactly as it was.
+#[test]
+fn the_exif_flag_writes_the_header_keywords() {
+    let dir = scratch("exif");
+    let extra = vec![
+        "EXPTIME =                  0.5".to_string(),
+        "ISO     =                1600".to_string(),
+        "FOCALLEN=                 24.0".to_string(),
+        "FNUMBER =                  2.8".to_string(),
+        "INSTRUME=          'QHY268M'".to_string(),
+        "DATE-OBS= '2024-01-15'".to_string(),
+        "TIME-OBS= '20:30:00'".to_string(),
+    ];
+    write_fits_with(&dir.join("m.fits"), 64, 48, &extra, |x, y| {
+        1500.0 + (x + y) as f64 * 3.0 + ((x * 7919 + y * 104_729) % 97) as f64
+    });
+
+    // Without the flag there is no EXIF at all.
+    assert!(run(&dir, &["m.fits", "plain.jpg"]).status.success());
+    let plain = std::fs::read(dir.join("plain.jpg")).unwrap();
+    assert!(!plain.windows(4).any(|w| w == b"Exif"), "the plain conversion carries EXIF");
+
+    // With the flag the block is there and readable.
+    let o = run(&dir, &["m.fits", "exif.jpg", "--exif"]);
+    assert!(o.status.success(), "{}", stderr(&o));
+    let with_exif = std::fs::read(dir.join("exif.jpg")).unwrap();
+    assert!(with_exif.windows(4).any(|w| w == b"Exif"), "the EXIF block is missing");
+
+    // The image data behind it is the very same as without the flag.
+    let length = u16::from_be_bytes([with_exif[4], with_exif[5]]) as usize;
+    assert_eq!(&with_exif[4 + length..], &plain[2..], "the image data changed");
+
+    let metadata = little_exif::metadata::Metadata::new_from_vec(
+        &with_exif,
+        little_exif::filetype::FileExtension::JPEG,
+    )
+    .unwrap();
+    let exposure = metadata
+        .get_tag_by_hex(0x829a, Some(little_exif::ifd::ExifTagGroup::EXIF))
+        .next()
+        .expect("no exposure time");
+    match exposure {
+        little_exif::exif_tag::ExifTag::ExposureTime(value) => {
+            assert_eq!(*value, vec![little_exif::rational::uR64 { nominator: 1, denominator: 2 }]);
+        }
+        other => panic!("unexpected exposure tag: {other:?}"),
+    }
+    let model = metadata
+        .get_tag_by_hex(0x0110, Some(little_exif::ifd::ExifTagGroup::GENERIC))
+        .next()
+        .expect("no model");
+    match model {
+        little_exif::exif_tag::ExifTag::Model(value) => assert_eq!(value, "QHY268M"),
+        other => panic!("unexpected model tag: {other:?}"),
+    }
+}

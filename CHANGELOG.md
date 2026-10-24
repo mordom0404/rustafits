@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **EXIF in the JPEG output.** `--exif` (CLI) and `encode_jpeg_with_exif` /
+  `save_processed_with_exif` / `convert_with_exif` (library) write the
+  FITS/XISF header's observational keywords into the JPEG's EXIF block:
+  date and time, exposure time, ISO, f-number, focal length, sensor
+  temperature, instrument, telescope, filter, target, observer and the
+  coordinates as GPS. The header is read on its own — the pixel pipeline is
+  untouched — and the block is injected as an APP1 segment, so the encoded
+  image data stays byte-identical to a conversion without EXIF. Opt-in: the
+  default output is unchanged.
+
+  This is a port of the idea from [PR #1](https://github.com/eg013ra1n/rustafits/pull/1)
+  (closed unmerged; the author said he would implement it himself), with the
+  reviewer's findings addressed: the exposure time is a real rational instead
+  of a truncated integer, the focal length is the focal length and no longer
+  the f-number, and `ProcessedImage` keeps its shape — the metadata is passed
+  to the encoder separately, so downstream code that builds that struct
+  literally still compiles.
+
 ## [1.6.0] — 2026-10-24
 
 Render-path speed work (same bytes), selectable PNG compression, and fixes.
